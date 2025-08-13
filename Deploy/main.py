@@ -6,7 +6,7 @@ from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
 # Load model .keras yang sudah dilatih
 model_path = "model2/model_serangga_hama_padi.h5"
-'  # Ganti dengan path model .keras kamu
+# Ganti dengan path model .keras kamu
 model = tf.keras.models.load_model(model_path)
 
 # Kelas/label untuk prediksi
