@@ -5,6 +5,7 @@ from PIL import Image
 from pathlib import Path
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
+
 # =======================
 # Load Model
 # =======================
