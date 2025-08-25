@@ -24,7 +24,7 @@ model = tf.keras.models.load_model(str(MODEL_PATH))
 # Label Kelas
 # =======================
 class_names = [
-    'Kutu beras', 'Lalat cecid', 'penggulung daun padi', 'semut', 'ulat berduri', 'wereng hijau'
+    'Kutu beras', 'Lalat cecid', 'penggulung daun padi', 'semut', 'snail', 'ulat berduri', 'wereng hijau'
 ]
 
 # =======================
