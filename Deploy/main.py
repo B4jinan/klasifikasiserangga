@@ -19,8 +19,8 @@ CLASS_NAMES = [
 # Kalibrasi & ambang open-set
 TEMP = 2.0          # temperature scaling (1.5–3.0; sesuaikan di validasi)
 TOPK = 3
-TH_TOP1 = 0.50      # jika top-1 < 0.55 → tidak teridentifikasi
-TH_MARGIN = 0.10    # jika (top1-top2) < 0.15 → tidak teridentifikasi
+TH_TOP1 = 0.40      # jika top-1 < 0.55 → tidak teridentifikasi
+TH_MARGIN = 0.05    # jika (top1-top2) < 0.15 → tidak teridentifikasi
 TH_ENTROPY = 1.45   # jika entropi > 1.30 (ln(7)≈1.95) → tidak teridentifikasi
 
 # =========================
