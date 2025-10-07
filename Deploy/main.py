@@ -17,6 +17,17 @@ CLASS_NAMES = [
 ]
 
 # =========================
+# Parameter kalibrasi & open-set (tanpa sidebar)
+# Silakan ubah nilainya di sini jika perlu penyesuaian.
+# =========================
+TEMP = 1.5        # temperature scaling untuk kalibrasi probabilitas
+TH_TOP1 = 0.35    # ambang minimal probabilitas kelas tertinggi
+TH_MARGIN = 0.10  # ambang minimal selisih (Top1 - Top2)
+TH_ENTROPY = 1.60 # ambang maksimal entropi (semakin besar = model makin ragu)
+RULE_TOP1_HARD = 0.25   # jika Top1 < nilai ini -> paksa "Tidak teridentifikasi"
+RULE_STD_FLAT = 0.05    # jika sebaran probabilitas terlalu datar (std < ini) -> "Tidak teridentifikasi"
+
+# =========================
 # Utilitas
 # =========================
 @st.cache_resource
@@ -53,39 +64,6 @@ def decide_unknown(probs, th_top1, th_margin, th_entropy):
     is_unknown = (top1 < th_top1) or (margin < th_margin) or (H > th_entropy)
     return is_unknown, idx_sorted, top1, margin, H
 
-# ---- Grad-CAM (opsional) ----
-def _find_last_conv(model):
-    for layer in reversed(model.layers):
-        if isinstance(layer, (tf.keras.layers.Conv2D, tf.keras.layers.SeparableConv2D)):
-            return layer.name
-    return None
-
-def grad_cam(model, x, class_index):
-    last_name = _find_last_conv(model)
-    if last_name is None: 
-        return None
-    grad_model = tf.keras.models.Model([model.inputs],
-                                       [model.get_layer(last_name).output, model.output])
-    with tf.GradientTape() as tape:
-        conv_out, preds = grad_model(x)
-        loss = preds[:, class_index]
-    grads = tape.gradient(loss, conv_out)
-    pooled = tf.reduce_mean(grads, axis=(0, 1, 2))
-    conv_out = conv_out[0]
-    cam = tf.reduce_sum(tf.multiply(pooled, conv_out), axis=-1)
-    cam = np.maximum(cam, 0)
-    cam = cam / (np.max(cam) + 1e-8)
-    return cam
-
-def overlay_cam(pil_img, cam, alpha=0.35):
-    import cv2
-    img = np.array(pil_img.convert("RGB"))
-    cam_r = cv2.resize(cam, (img.shape[1], img.shape[0]))
-    heat = cv2.applyColorMap((cam_r * 255).astype(np.uint8), cv2.COLORMAP_JET)
-    heat = cv2.cvtColor(heat, cv2.COLOR_BGR2RGB)
-    blend = (heat * alpha + img * (1 - alpha)).astype(np.uint8)
-    return Image.fromarray(blend)
-
 # =========================
 # UI
 # =========================
@@ -96,17 +74,12 @@ if not MODEL_PATH.exists():
     st.error(f"❌ File model tidak ditemukan di: {MODEL_PATH}")
     st.stop()
 
-# Sidebar: kontrol threshold & temperature
-st.sidebar.header("Pengaturan Deteksi Open-Set")
-TEMP = st.sidebar.slider("Temperature (kalibrasi)", 0.8, 3.0, 1.5, 0.1)
-TH_TOP1 = st.sidebar.slider("Ambang Top-1", 0.10, 0.80, 0.35, 0.01)
-TH_MARGIN = st.sidebar.slider("Ambang Margin (Top1−Top2)", 0.00, 0.40, 0.10, 0.01)
-TH_ENTROPY = st.sidebar.slider("Ambang Entropi", 0.80, 1.95, 1.60, 0.01)
-SHOW_CAM = st.sidebar.checkbox("Tampilkan Grad-CAM", value=False)
-
 uploaded_file = st.file_uploader("Unggah gambar…", type=["jpg", "jpeg", "png"])
 model = load_model()
 
+# =========================
+# Prediksi + Open-Set (tanpa sidebar)
+# =========================
 if uploaded_file:
     image = Image.open(uploaded_file)
     st.image(image, caption="Gambar yang diunggah", use_container_width=True)
@@ -119,15 +92,27 @@ if uploaded_file:
     raw = model(x, training=False).numpy()  # bisa logits atau probs
     probs = apply_temperature(raw, T=TEMP)
 
-    # Keputusan open-set
+    # Keputusan open-set dasar (berdasar top1, margin, entropi)
     unknown, idx_sorted, top1, margin, H = decide_unknown(
         probs, th_top1=TH_TOP1, th_margin=TH_MARGIN, th_entropy=TH_ENTROPY
     )
 
-    if unknown:
+    # ======= Aturan tambahan yang lebih ketat untuk gambar "random" =======
+    avg_prob = float(probs.mean())
+    std_prob = float(probs.std())
+    force_unknown = (top1 < RULE_TOP1_HARD) or (std_prob < RULE_STD_FLAT) or unknown
+    # ======================================================================
+
+    if force_unknown:
         st.markdown("### 🐞 Prediksi: **Tidak teridentifikasi**")
-        st.markdown(f"Probabilitas tertinggi **{top1*100:.2f}%**; margin **{margin*100:.2f}%**; entropi **{H:.2f}**.")
-        st.info("Kemungkinan bukan 7 hama pada model atau kualitas gambar kurang baik. Coba unggah ulang dengan sudut/ketajaman berbeda.")
+        st.markdown(
+            f"Probabilitas tertinggi **{top1*100:.2f}%**; margin **{margin*100:.2f}%**; "
+            f"entropi **{H:.2f}**; sebaran std **{std_prob:.3f}**."
+        )
+        st.info(
+            "Gambar tidak cocok dengan 7 kelas hama dalam model. "
+            "Kemungkinan gambar bukan serangga pada dataset atau kualitas gambar kurang baik."
+        )
     else:
         top_idx = idx_sorted[0]
         st.markdown(f"### 🐞 Prediksi: **{CLASS_NAMES[top_idx]}**")
@@ -141,15 +126,9 @@ if uploaded_file:
         "Probabilitas": [f"{probs[0, i]*100:.2f}%" for i in topk]
     })
 
-    # Grad-CAM opsional
-    if SHOW_CAM and not unknown:
-        cam = grad_cam(model, x, class_index=idx_sorted[0])
-        if cam is not None:
-            st.image(overlay_cam(image, cam), caption="Grad-CAM", use_column_width=True)
-        else:
-            st.info("Layer konvolusi tidak terdeteksi untuk Grad-CAM.")
-
     st.caption(
-        f"Top1={top1*100:.2f}%, Margin={margin*100:.2f}%, Entropy={H:.2f}, T={TEMP} "
-        f"→ Thresholds: Top1>{TH_TOP1}, Margin>{TH_MARGIN}, Entropy<{TH_ENTROPY}"
+        f"Kalibrasi T={TEMP} | Ambang: Top1>{TH_TOP1}, Margin>{TH_MARGIN}, Entropy<{TH_ENTROPY} | "
+        f"Rule tambahan: Top1<{RULE_TOP1_HARD} atau Std<{RULE_STD_FLAT} ⇒ Tidak teridentifikasi | "
+        f"Ringkasan: Top1={top1*100:.2f}%, Margin={margin*100:.2f}%, Entropy={H:.2f}, "
+        f"MeanProb={avg_prob:.3f}, StdProb={std_prob:.3f}"
     )
